@@ -61,8 +61,7 @@ class Bot {
     }
 
     async polling () {
-
-        if(!this.longPollServer) {
+        if(this.longPollServer === null || this.longPollData?.failed) {
             this.longPollServer = await this.getLongPollServer()
         }
 
