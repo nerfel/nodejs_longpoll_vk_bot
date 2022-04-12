@@ -188,6 +188,16 @@ class Bot {
         return response.data.response
     }
 
+    async getProfileInfo() {
+        let { data } = await axios.get('https://api.vk.com/method/account.getProfileInfo', {
+            params: {
+                access_token: this.token,
+                v: this.api_v
+            }
+        })
+        return data.response
+    }
+
     on(trigger, callback) {
         this.commands.push({ trigger, callback})
     }
