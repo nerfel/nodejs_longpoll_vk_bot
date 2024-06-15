@@ -4,13 +4,15 @@ let FormData = require('form-data')
 
 class Bot {
 
-    constructor(token=process.env.TOKEN, api_v=process.env.API_V) {
+    constructor(token=process.env.TOKEN, admins=process.env.ADMINS, api_v=process.env.API_V) {
         this.token = token
         this.api_v = api_v
         this.longPollServer = null
         this.longPollData = null
         this.handleTimeOut = 50
         this.commands = []
+        this.admins = JSON.parse(admins)
+        this.muted = []
 
         this.systemHelpers = {
             syncTimeout: ms => new Promise(resolve => setTimeout(resolve, ms)),
@@ -61,7 +63,7 @@ class Bot {
     }
 
     async polling () {
-        if(this.longPollServer === null || this.longPollData?.failed) {
+        if (this.longPollServer === null || this.longPollData?.failed) {
             this.longPollServer = await this.getLongPollServer()
         }
 
@@ -78,29 +80,36 @@ class Bot {
         })
 
         this.longPollData = lpData
-        if(this.longPollData.failed) {
+        if (this.longPollData.failed) {
             this.longPollServer = await this.longPollServer
         }
         this.longPollServer.ts = this.longPollData.ts
 
-        if(this.longPollData.updates instanceof Array) {
-            this.longPollData.updates.forEach((element) => {
-                if(element[0] === 4) { // handle only messages
+        if (this.longPollData.updates instanceof Array) {
+            for (const element of this.longPollData.updates) {
+                if (element[0] === 4) { // handle only messages
                     let command = this.commands.find( command => command.trigger === element[6])
-                    if(command) {
+                    if (command) {
                         this.systemHelpers.handleLongPollUpdate(command, element, command.trigger)
                     }
                     else {
                         let regexCommand = this.commands.find(command => command.trigger instanceof RegExp && element[6].match(command.trigger))
-                        if(regexCommand) {
+                        if (regexCommand) {
                             let found = element[6].match(regexCommand.trigger)
-                            if(found) {
+                            if (found) {
                                 this.systemHelpers.handleLongPollUpdate(regexCommand, element, found)
                             }
                         }
                     }
+
+                    this.muted = this.muted.filter(user => user.unMuteTimestamp > Math.floor(Date.now() / 1000))
+                    let message = await this.getMessageInfo(element[1])
+
+                    if (this.muted.some(u => u.vk_id === message.items[0].from_id)) {
+                        this.deleteMessage(message)
+                    }
                 }
-            })
+            }
         }
 
         await this.syncTimeout(this.handleTimeOut)
@@ -119,7 +128,19 @@ class Bot {
         return axios.get('https://api.vk.com/method/messages.send', { params })
     }
 
-    async getConversationMembers(peer_id) {
+    async deleteMessage(message) {
+        let params = {
+            access_token: this.token,
+            v: this.api_v,
+            message_ids: message.items[0].id,
+            delete_for_all: 1,
+            peer_id: message.items[0].peer_id
+        }
+
+        return axios.get('https://api.vk.com/method/messages.delete', { params })
+    }
+
+    async getConversationMembers(peer_id, excludeCurrentBot = true) {
         const { data } = await axios.get('https://api.vk.com/method/messages.getConversationMembers', {
             params: {
                 access_token: this.token,
@@ -127,8 +148,13 @@ class Bot {
                 v: this.api_v
             }
         })
-        return data.response.profiles
 
+        if (!excludeCurrentBot) {
+            return data.response.profiles
+        }
+
+        const currentBot = await this.getProfileInfo()
+        return data.response.profiles.filter(user => user.id !== currentBot.id)
     }
 
     async getMessageInfo(id) {
@@ -199,6 +225,17 @@ class Bot {
 
     on(trigger, callback) {
         this.commands.push({ trigger, callback})
+    }
+
+    mute(userData) {
+        if (this.muted.some(u => u.vk_id === userData.vk_id)) {
+            return;
+        }
+
+        this.muted.push({
+            vk_id: userData.vk_id,
+            unMuteTimestamp: Math.floor(Date.now() / 1000) + (userData.term * 60)
+        })
     }
 
 }
